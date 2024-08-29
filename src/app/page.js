@@ -18,10 +18,9 @@ export default function Home() {
     if (message.trim() === "") return; // Prevent sending empty messages
     setLoading(true);
     setMessage("");
-    setMessages((messages) => [
-      ...messages,
+    setMessages((prevMessages) => [
+      ...prevMessages,
       { role: "user", content: message },
-      { role: "assistant", content: "" },
     ]);
 
     try {
@@ -33,30 +32,20 @@ export default function Home() {
         body: JSON.stringify([...messages, { role: "user", content: message }]),
       });
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-      let result = "";
-      await reader.read().then(function processText({ done, value }) {
-        if (done) return result;
+      const data = await response.json();
 
-        const text = decoder.decode(value || new Uint8Array(), {
-          stream: true,
-        });
-
-        setMessages((messages) => {
-          const updatedMessages = [...messages];
-          const lastMessage = updatedMessages[updatedMessages.length - 1];
-          lastMessage.content += text;
-          return updatedMessages;
-        });
-
-        return reader.read().then(processText);
-      });
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        { role: "assistant", content: data.response },
+      ]);
     } catch (error) {
       console.error("Error fetching data:", error);
-      setMessages((messages) => [
-        ...messages,
+      setMessages((prevMessages) => [
+        ...prevMessages,
         {
           role: "assistant",
           content: "Sorry, something went wrong. Please try again.",
@@ -67,6 +56,7 @@ export default function Home() {
       scrollToBottom();
     }
   };
+
 
   const handleKeyDown = (event) => {
     if (event.key === "Enter" && !loading) {

@@ -1,4 +1,3 @@
-
 import React from "react";
 import { NextResponse } from "next/server";
 import { Pinecone } from "@pinecone-database/pinecone";
@@ -47,13 +46,12 @@ For each query, structure your response as follows:
 **Remember, your goal is to help students make informed decisions based on professor reviews and ratings.**
 `
 ;
-
 export async function POST(req) {
   const data = await req.json();
   const pc = new Pinecone({
     apiKey: process.env.PINECONE_API_KEY,
   });
-  const index = pc.Index("rag").namespace("ns1");
+  const index = pc.Index("mainrag1").namespace("ns1");
   const openai = new OpenAI({
     baseURL: "https://openrouter.ai/api/v1",
     apiKey: process.env.OPENROUTER_API_KEY,
@@ -67,54 +65,42 @@ export async function POST(req) {
   const embeddings = Result.embedding;
   const results = await index.query({
     topK: 3,
-    vector: embeddings['values'],
+    vector: embeddings["values"],
     includeMetadata: true,
   });
-  
-  let resultString = "\n\nReturned results from vector db {done automatically}";
-  results.matches.forEach((match) => {
-    resultString += `\n
-    Professor: ${match.id}
-    Review: ${match.metadata.review}
-    Subject: ${match.metadata.subject}
-    Stars: ${match.metadata.stars}
-    \n\n`
-    ;
-  });
+
+  const contextFromResults = results.matches.map((match) => ({
+    id: match.id || "N/A", 
+    source:match.metadata["source"] || "N/A",
+    author: match.metadata["pdf.info.Author"] || "N/A",
+    page: match.metadata["text"] || "N/A",
+  }));
 
   const lastMessage = data[data.length - 1];
-  const lastMessageContent = lastMessage.content + resultString;
+  const lastMessageContent =
+    lastMessage.content +
+    "\n\nContext from vector DB:\n" +
+    JSON.stringify(contextFromResults, null, 2);
   const lastDataWithoutLastMessage = data.slice(0, data.length - 1);
 
-  const completion = await openai.chat.completions.create({
-    model: "meta-llama/llama-3.1-8b-instruct:free",
-    messages: [
-      { role: "user", content: systemPrompt },
-      ...lastDataWithoutLastMessage,
-      { role: "user", content: lastMessageContent },
-    ],
-    stream: true,
-  });
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "meta-llama/llama-3.1-8b-instruct:free",
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...lastDataWithoutLastMessage,
+        { role: "user", content: lastMessageContent },
+      ],
+    });
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const encoder = new TextEncoder();
-      try {
-        for await (const chunk of completion) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) {
-            const text = encoder.encode(content);
-            controller.enqueue(text);
-          }
-        }
-      } catch (error) {
-        controller.error(error);
-      } finally {
-        controller.close();
-      }
-    },
-  });
-
-
-  return new NextResponse(stream);
+    const response = completion.choices[0].message.content;
+    console.log(response);
+    return NextResponse.json({ response });
+  } catch (error) {
+    console.error("Error in OpenAI API call:", error);
+    return NextResponse.json(
+      { error: "An error occurred while processing your request." },
+      { status: 500 }
+    );
+  }
 }
